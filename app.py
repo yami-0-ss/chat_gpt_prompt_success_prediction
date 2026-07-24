@@ -1,80 +1,92 @@
-import os
 import pickle
 import numpy as np
 from flask import Flask, request, jsonify, render_template_string
 
-# Base directory for Vercel Serverless environment
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, 'chatgpt_model.pkl')
-
 app = Flask(__name__)
 
-# Safe model load
-model = None
-model_error = None
+# ---------------------------------------------------------
+# 1. Load Model
+# ---------------------------------------------------------
+try:
+    with open('chatgpt_model.pkl', 'rb') as f:
+        model = pickle.load(f)
+    print("Model loaded successfully.")
+except Exception as e:
+    print(f"Error loading model: {e}")
+    model = None
 
-if os.path.exists(MODEL_PATH):
-    try:
-        with open(MODEL_PATH, 'rb') as f:
-            model = pickle.load(f)
-    except Exception as e:
-        model_error = f"Model loading error: {str(e)}"
-else:
-    model_error = f"Model file not found at: {MODEL_PATH}"
+# Feature list based on model metadata
+FEATURE_NAMES = [
+    'topic_category',
+    'prompt_style',
+    'language',
+    'prompt_length',
+    'num_examples_in_prompt',
+    'clarity_score',
+    'specificity_score',
+    'token_count',
+    'context_window_used_pct',
+    'temperature',
+    'model_version',
+    'response_time_sec',
+    'response_length',
+    'hallucination_flag',
+    'user_rating',
+    'follow_up_needed'
+]
 
-# Mappings from Name Options -> Numerical Model Encodings
-TOPIC_MAP = {"Coding": 0, "Creative Writing": 1, "Data Analysis": 2, "General Knowledge": 3, "Math & Logic": 4}
-PROMPT_STYLE_MAP = {"Direct": 0, "Roleplay": 1, "Step-by-Step": 2, "Few-Shot": 3}
-LANGUAGE_MAP = {"English": 0, "Spanish": 1, "French": 2, "German": 3, "Hindi": 4}
-MODEL_VERSION_MAP = {"GPT-3.5-Turbo": 0, "GPT-4": 1, "GPT-4o": 2, "GPT-4-Mini": 3}
-FLAG_MAP = {"No": 0, "Yes": 1}
-
-HTML_LAYOUT = """
+# ---------------------------------------------------------
+# 2. HTML + CSS + JS Template
+# ---------------------------------------------------------
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChatGPT Quality Evaluator — AI Analytics</title>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>ChatGPT Analytics & Prediction Hub</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-gradient: linear-gradient(135deg, #0b0f19 0%, #111827 50%, #172554 100%);
-            --card-bg: rgba(255, 255, 255, 0.03);
-            --card-border: rgba(255, 255, 255, 0.08);
-            --accent-purple: #8b5cf6;
+            --bg-dark: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --accent-glow: #6366f1;
             --accent-cyan: #06b6d4;
             --text-main: #f8fafc;
             --text-muted: #94a3b8;
+            --border-color: rgba(255, 255, 255, 0.1);
         }
 
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
-            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-family: 'Inter', sans-serif;
         }
 
         body {
-            background: var(--bg-gradient);
+            background-color: var(--bg-dark);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(6, 182, 212, 0.15) 0px, transparent 50%);
             min-height: 100vh;
             color: var(--text-main);
             display: flex;
-            align-items: center;
             justify-content: center;
-            padding: 2.5rem 1rem;
+            align-items: center;
+            padding: 2rem 1rem;
         }
 
         .container {
             width: 100%;
             max-width: 1000px;
             background: var(--card-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid var(--card-border);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
             border-radius: 24px;
             padding: 2.5rem;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
 
         .header {
@@ -83,9 +95,9 @@ HTML_LAYOUT = """
         }
 
         .header h1 {
-            font-size: 2.25rem;
+            font-size: 2.2rem;
             font-weight: 700;
-            background: linear-gradient(to right, #a78bfa, #38bdf8, #22d3ee);
+            background: linear-gradient(135deg, #a5b4fc, #38bdf8);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             margin-bottom: 0.5rem;
@@ -96,303 +108,246 @@ HTML_LAYOUT = """
             font-size: 0.95rem;
         }
 
-        .form-grid {
+        .grid-form {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             gap: 1.25rem;
         }
 
         .input-group {
             display: flex;
             flex-direction: column;
-            gap: 0.4rem;
         }
 
         .input-group label {
-            font-size: 0.8rem;
-            font-weight: 600;
-            color: #cbd5e1;
-            letter-spacing: 0.025em;
+            font-size: 0.825rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-bottom: 0.4rem;
+            text-transform: capitalize;
         }
 
-        .input-group input, .input-group select {
-            width: 100%;
-            padding: 0.75rem 1rem;
-            background: rgba(15, 23, 42, 0.7);
-            border: 1px solid var(--card-border);
+        .input-group input {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border-color);
             border-radius: 12px;
-            color: #fff;
+            padding: 0.75rem 1rem;
+            color: var(--text-main);
             font-size: 0.9rem;
             outline: none;
             transition: all 0.25s ease;
         }
 
-        .input-group input:focus, .input-group select:focus {
-            border-color: var(--accent-purple);
-            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.25);
+        .input-group input:focus {
+            border-color: var(--accent-glow);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+        }
+
+        .actions {
+            grid-column: 1 / -1;
+            margin-top: 1rem;
+            display: flex;
+            justify-content: center;
         }
 
         .btn-submit {
-            grid-column: 1 / -1;
-            margin-top: 1rem;
-            padding: 1rem;
+            background: linear-gradient(135deg, var(--accent-glow), var(--accent-cyan));
+            color: white;
             border: none;
             border-radius: 12px;
-            background: linear-gradient(135deg, var(--accent-purple), #6d28d9);
-            color: white;
+            padding: 0.9rem 2.5rem;
             font-size: 1rem;
             font-weight: 600;
             cursor: pointer;
             transition: transform 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 10px 20px -5px rgba(99, 102, 241, 0.4);
         }
 
         .btn-submit:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px -5px rgba(109, 40, 217, 0.4);
+            box-shadow: 0 15px 25px -5px rgba(99, 102, 241, 0.6);
         }
 
-        .result-box {
+        .btn-submit:active {
+            transform: translateY(0);
+        }
+
+        .result-panel {
             margin-top: 2rem;
             padding: 1.5rem;
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--border-color);
             border-radius: 16px;
-            background: rgba(15, 23, 42, 0.85);
-            border: 1px solid var(--card-border);
             display: none;
             text-align: center;
-        }
-
-        .result-box.active {
-            display: block;
-            animation: fadeIn 0.4s ease-out;
-        }
-
-        .result-title {
-            color: var(--text-muted);
-            font-size: 0.9rem;
-            margin-bottom: 0.25rem;
-        }
-
-        .result-value {
-            font-size: 2rem;
-            font-weight: 700;
-            color: var(--accent-cyan);
+            animation: fadeIn 0.4s ease forwards;
         }
 
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
+
+        .result-panel h2 {
+            font-size: 1.1rem;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .prediction-badge {
+            display: inline-block;
+            font-size: 2rem;
+            font-weight: 700;
+            color: #38bdf8;
+            margin-top: 0.25rem;
+        }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <div class="header">
-        <h1>ChatGPT Quality Predictor</h1>
-        <p>Select prompt and execution metrics using human-readable options</p>
-    </div>
-
-    <form id="chatgptForm">
-        <div class="form-grid">
-            <div class="input-group">
-                <label>Topic Category</label>
-                <select name="topic_category" required>
-                    <option value="Coding">Coding</option>
-                    <option value="Creative Writing">Creative Writing</option>
-                    <option value="Data Analysis">Data Analysis</option>
-                    <option value="General Knowledge">General Knowledge</option>
-                    <option value="Math & Logic">Math & Logic</option>
-                </select>
-            </div>
-
-            <div class="input-group">
-                <label>Prompt Style</label>
-                <select name="prompt_style" required>
-                    <option value="Direct">Direct</option>
-                    <option value="Roleplay">Roleplay</option>
-                    <option value="Step-by-Step">Step-by-Step</option>
-                    <option value="Few-Shot">Few-Shot</option>
-                </select>
-            </div>
-
-            <div class="input-group">
-                <label>Language</label>
-                <select name="language" required>
-                    <option value="English">English</option>
-                    <option value="Spanish">Spanish</option>
-                    <option value="French">French</option>
-                    <option value="German">German</option>
-                    <option value="Hindi">Hindi</option>
-                </select>
-            </div>
-
-            <div class="input-group">
-                <label>Prompt Length (Chars)</label>
-                <input type="number" name="prompt_length" value="150" required>
-            </div>
-
-            <div class="input-group">
-                <label>Examples in Prompt</label>
-                <input type="number" name="num_examples_in_prompt" value="2" min="0" max="10" required>
-            </div>
-
-            <div class="input-group">
-                <label>Clarity Score (1-10)</label>
-                <input type="number" step="0.1" name="clarity_score" value="8.5" min="1" max="10" required>
-            </div>
-
-            <div class="input-group">
-                <label>Specificity Score (1-10)</label>
-                <input type="number" step="0.1" name="specificity_score" value="7.8" min="1" max="10" required>
-            </div>
-
-            <div class="input-group">
-                <label>Token Count</label>
-                <input type="number" name="token_count" value="450" required>
-            </div>
-
-            <div class="input-group">
-                <label>Context Window Used (%)</label>
-                <input type="number" step="0.1" name="context_window_used_pct" value="25.0" min="0" max="100" required>
-            </div>
-
-            <div class="input-group">
-                <label>Temperature (0.0 - 1.0)</label>
-                <input type="number" step="0.1" name="temperature" value="0.7" min="0" max="1" required>
-            </div>
-
-            <div class="input-group">
-                <label>Model Version</label>
-                <select name="model_version" required>
-                    <option value="GPT-4o">GPT-4o</option>
-                    <option value="GPT-4">GPT-4</option>
-                    <option value="GPT-4-Mini">GPT-4-Mini</option>
-                    <option value="GPT-3.5-Turbo">GPT-3.5-Turbo</option>
-                </select>
-            </div>
-
-            <div class="input-group">
-                <label>Response Time (Sec)</label>
-                <input type="number" step="0.1" name="response_time_sec" value="2.3" required>
-            </div>
-
-            <div class="input-group">
-                <label>Response Length (Words)</label>
-                <input type="number" name="response_length" value="350" required>
-            </div>
-
-            <div class="input-group">
-                <label>Hallucination Flag</label>
-                <select name="hallucination_flag" required>
-                    <option value="No">No</option>
-                    <option value="Yes">Yes</option>
-                </select>
-            </div>
-
-            <div class="input-group">
-                <label>User Rating (1-5)</label>
-                <input type="number" step="0.1" name="user_rating" value="4.5" min="1" max="5" required>
-            </div>
-
-            <div class="input-group">
-                <label>Follow-up Needed</label>
-                <select name="follow_up_needed" required>
-                    <option value="No">No</option>
-                    <option value="Yes">Yes</option>
-                </select>
-            </div>
-
-            <button type="submit" class="btn-submit">Evaluate ChatGPT Performance</button>
+    <div class="container">
+        <div class="header">
+            <h1>ChatGPT Model Predictor</h1>
+            <p>Input execution parameters to run real-time inference on your decision tree model</p>
         </div>
-    </form>
 
-    <div id="resultBox" class="result-box">
-        <div class="result-title">Model Classification Result</div>
-        <div id="resultValue" class="result-value">--</div>
+        <form id="predictionForm">
+            <div class="grid-form">
+                <div class="input-group">
+                    <label for="topic_category">Topic Category</label>
+                    <input type="number" step="any" id="topic_category" name="topic_category" value="1" required>
+                </div>
+                <div class="input-group">
+                    <label for="prompt_style">Prompt Style</label>
+                    <input type="number" step="any" id="prompt_style" name="prompt_style" value="1" required>
+                </div>
+                <div class="input-group">
+                    <label for="language">Language</label>
+                    <input type="number" step="any" id="language" name="language" value="1" required>
+                </div>
+                <div class="input-group">
+                    <label for="prompt_length">Prompt Length</label>
+                    <input type="number" step="any" id="prompt_length" name="prompt_length" value="120" required>
+                </div>
+                <div class="input-group">
+                    <label for="num_examples_in_prompt">Num Examples</label>
+                    <input type="number" step="any" id="num_examples_in_prompt" name="num_examples_in_prompt" value="2" required>
+                </div>
+                <div class="input-group">
+                    <label for="clarity_score">Clarity Score</label>
+                    <input type="number" step="any" id="clarity_score" name="clarity_score" value="0.85" required>
+                </div>
+                <div class="input-group">
+                    <label for="specificity_score">Specificity Score</label>
+                    <input type="number" step="any" id="specificity_score" name="specificity_score" value="0.90" required>
+                </div>
+                <div class="input-group">
+                    <label for="token_count">Token Count</label>
+                    <input type="number" step="any" id="token_count" name="token_count" value="450" required>
+                </div>
+                <div class="input-group">
+                    <label for="context_window_used_pct">Context Window Used (%)</label>
+                    <input type="number" step="any" id="context_window_used_pct" name="context_window_used_pct" value="25.5" required>
+                </div>
+                <div class="input-group">
+                    <label for="temperature">Temperature</label>
+                    <input type="number" step="any" id="temperature" name="temperature" value="0.7" required>
+                </div>
+                <div class="input-group">
+                    <label for="model_version">Model Version</label>
+                    <input type="number" step="any" id="model_version" name="model_version" value="4" required>
+                </div>
+                <div class="input-group">
+                    <label for="response_time_sec">Response Time (sec)</label>
+                    <input type="number" step="any" id="response_time_sec" name="response_time_sec" value="1.2" required>
+                </div>
+                <div class="input-group">
+                    <label for="response_length">Response Length</label>
+                    <input type="number" step="any" id="response_length" name="response_length" value="600" required>
+                </div>
+                <div class="input-group">
+                    <label for="hallucination_flag">Hallucination Flag (0/1)</label>
+                    <input type="number" step="any" id="hallucination_flag" name="hallucination_flag" value="0" required>
+                </div>
+                <div class="input-group">
+                    <label for="user_rating">User Rating</label>
+                    <input type="number" step="any" id="user_rating" name="user_rating" value="5" required>
+                </div>
+                <div class="input-group">
+                    <label for="follow_up_needed">Follow Up Needed (0/1)</label>
+                    <input type="number" step="any" id="follow_up_needed" name="follow_up_needed" value="0" required>
+                </div>
+
+                <div class="actions">
+                    <button type="submit" class="btn-submit">Run Prediction</button>
+                </div>
+            </div>
+        </form>
+
+        <div id="resultPanel" class="result-panel">
+            <h2>Predicted Output Class</h2>
+            <div id="predictionOutput" class="prediction-badge">-</div>
+        </div>
     </div>
-</div>
 
-<script>
-    document.getElementById('chatgptForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        
-        const formData = new FormData(e.target);
-        const resultBox = document.getElementById('resultBox');
-        const resultValue = document.getElementById('resultValue');
-
-        try {
+    <script>
+        document.getElementById('predictionForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
             const response = await fetch('/predict', {
                 method: 'POST',
                 body: formData
             });
 
-            const data = await response.json();
+            const result = await response.json();
+            const resultPanel = document.getElementById('resultPanel');
+            const output = document.getElementById('predictionOutput');
 
-            if (data.success) {
-                resultBox.classList.add('active');
-                resultValue.textContent = String(data.prediction).toUpperCase();
+            if (result.success) {
+                output.innerText = `Class: ${result.prediction}`;
+                resultPanel.style.display = 'block';
             } else {
-                alert('Prediction Error: ' + data.error);
+                output.innerText = `Error: ${result.error}`;
+                resultPanel.style.display = 'block';
             }
-        } catch (err) {
-            alert('Server connection error!');
-        }
-    });
-</script>
-
+        });
+    </script>
 </body>
 </html>
 """
 
-@app.route('/', methods=['GET'])
+# ---------------------------------------------------------
+# 3. Flask Routes
+# ---------------------------------------------------------
+@app.route('/')
 def home():
-    return render_template_string(HTML_LAYOUT)
+    return render_template_string(HTML_TEMPLATE)
 
 @app.route('/predict', methods=['POST'])
 def predict():
     if model is None:
-        return jsonify({'success': False, 'error': model_error or 'Model file unavailable.'}), 500
+        return jsonify({'error': 'Model failed to load on server.'}), 500
 
     try:
-        data = request.form if request.form else (request.get_json(silent=True) or {})
+        input_data = []
+        for feature in FEATURE_NAMES:
+            val = request.request.form.get(feature, 0) if hasattr(request, 'request') else request.form.get(feature, 0)
+            input_data.append(float(val))
 
-        # Map named choices back to numerical model encodings safely
-        topic_val = TOPIC_MAP.get(data.get('topic_category'), 0)
-        style_val = PROMPT_STYLE_MAP.get(data.get('prompt_style'), 0)
-        lang_val = LANGUAGE_MAP.get(data.get('language'), 0)
-        prompt_len = float(data.get('prompt_length', 150))
-        num_examples = float(data.get('num_examples_in_prompt', 2))
-        clarity = float(data.get('clarity_score', 8.5))
-        specificity = float(data.get('specificity_score', 7.8))
-        tokens = float(data.get('token_count', 450))
-        context_used = float(data.get('context_window_used_pct', 25.0))
-        temp = float(data.get('temperature', 0.7))
-        model_ver = MODEL_VERSION_MAP.get(data.get('model_version'), 0)
-        resp_time = float(data.get('response_time_sec', 2.3))
-        resp_len = float(data.get('response_length', 350))
-        hallucination = FLAG_MAP.get(data.get('hallucination_flag'), 0)
-        rating = float(data.get('user_rating', 4.5))
-        follow_up = FLAG_MAP.get(data.get('follow_up_needed'), 0)
-
-        # 16 ordered features expected by chatgpt_model.pkl
-        features = np.array([[
-            topic_val, style_val, lang_val, prompt_len, num_examples,
-            clarity, specificity, tokens, context_used, temp,
-            model_ver, resp_time, resp_len, hallucination, rating, follow_up
-        ]])
-
-        prediction = model.predict(features)[0]
+        features_array = np.array([input_data])
+        prediction = model.predict(features_array)[0]
 
         return jsonify({
             'success': True,
-            'prediction': str(prediction)
+            'prediction': int(prediction)
         })
 
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 400
 
-# WSGI Handler export for Vercel
-app = app
-
+# ---------------------------------------------------------
+# 4. App Execution
+# ---------------------------------------------------------
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
